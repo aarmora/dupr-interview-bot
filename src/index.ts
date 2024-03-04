@@ -1,5 +1,5 @@
 
-import { Client, DMChannel, GatewayIntentBits, GuildMember } from 'discord.js';
+import { ChannelType, Client, DMChannel, GatewayIntentBits, GuildBasedChannel, GuildChannel, GuildMember } from 'discord.js';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import { DUPRResponse, DUPRResult } from './models';
@@ -10,26 +10,46 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages]
 });
 
+const testing = false;
 
 client.on('ready', () => {
-    console.log(`Logged in as ${client.user.tag}!`);
+    console.log(`Logged in as ${client.user.tag}! ${testing ? 'Testing' : 'Production'} mode active`);
 });
 
-const interviewQuestions = [
-    "What's your first and last name?",
-];
+client.login(process.env.botToken);
 
-// create enum of role ids and names
-enum Roles {
-    'Men' = '813204613830279208',
-    'Women' = '813204779081007104',
-    'Intermediate' = '837095698079285268',
-    'Verified' = '838839368529215550',
-    'Unverified' = '838840195083927603',
-    'DERPERS' = '1063933394381181060'
+let Roles;
+const timeout = testing ? 30000 : 600000;
+
+if (!testing) {
+    // TVP roles
+    Roles = {
+        Men: '813204613830279208',
+        Women: '813204779081007104',
+        'beginner to 3.5': '1205648275873599539',
+        '3.5 to 4.0': '837095698079285268',
+        '4.0 to 4.5': '1063933394381181060',
+        '4.5 Plus': '1205648589997604975',
+        Verified: '838839368529215550',
+        Unverified: '838840195083927603',
+    };
+} else {
+    // CI test roles
+    Roles = {
+        Men: '1205649290597236757',
+        Women: '1205649346784268348',
+        '3.5 to 4.0': '1205649457627271278',
+        '4.0 to 4.5': '1205649504318001163',
+        'beginner to 3.5': '1205650548129267762',
+        Verified: '1205649383341948940',
+        Unverified: '1205649418829959178',
+    };
 }
 
 client.on('guildMemberAdd', async member => {
+    const interviewQuestions = [
+        "What's your first and last name?",
+    ];
     // Add the unverified role to the new member
     try {
         await member.roles.add(Roles.Unverified);
@@ -58,7 +78,7 @@ client.on('guildMemberAdd', async member => {
 
         const filter = m => m.author.id === member.id; // Ensure the message is from the member
         try {
-            const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+            const collected = await dmChannel.awaitMessages({ filter, max: 1, time: timeout, errors: ['time'] });
             const response = collected.first().content;
 
             // Use the name to search for DUPR profile
@@ -66,14 +86,14 @@ client.on('guildMemberAdd', async member => {
 
             if (playerData.result.hits.length === 0) {
                 await dmChannel.send("I couldn't find a DUPR profile with that name. Would you like to try a different name? (yes/no)");
-                const retryCollected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+                const retryCollected = await dmChannel.awaitMessages({ filter, max: 1, time: timeout, errors: ['time'] });
                 if (retryCollected.first().content.toLowerCase() !== 'yes') {
                     searching = false;
                 }
             } else if (playerData.result.hits.length === 1) {
                 // If only one result, confirm with the member
                 await dmChannel.send(`Is this you?\n${playerData.result.hits[0].fullName}, ${playerData.result.hits[0].shortAddress}, Rating: ${playerData.result.hits[0].ratings.doubles} (yes/no)`);
-                const confirmCollected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+                const confirmCollected = await dmChannel.awaitMessages({ filter, max: 1, time: timeout, errors: ['time'] });
                 if (confirmCollected.first().content.toLowerCase() === 'yes') {
                     // handleConfirmedUser, like setting the nickname and roles
                     try {
@@ -89,7 +109,7 @@ client.on('guildMemberAdd', async member => {
                 // If multiple results, ask them to choose
                 let options = playerData.result.hits.map((hit, index) => `${index + 1}: ${hit.fullName}, ${hit.shortAddress}, Rating: ${hit.ratings.doubles}`).join('\n');
                 await dmChannel.send(`I found multiple profiles. Which one is you?\n${options}\nIf none of these are you, type 'none'.`);
-                const numCollected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+                const numCollected = await dmChannel.awaitMessages({ filter, max: 1, time: timeout, errors: ['time'] });
                 const selection = numCollected.first().content.toLowerCase();
                 if (selection === 'none') {
                     await dmChannel.send("Let's try a different name. What is your name?");
@@ -118,17 +138,16 @@ client.on('guildMemberAdd', async member => {
             // Handle situation where the member didn't respond in time
             await dmChannel.send("You did not respond in time, please try to answer more promptly.");
             searching = false;
+
+            await reportUserToAdmins(member);
         }
     }
 });
 
-
-
-client.login(process.env.botToken);
-
 async function handleConfirmedUser(member: GuildMember, duprPlayerData: DUPRResponse, dmChannel: DMChannel) {
     const player = duprPlayerData.result.hits[0];
-    await setMemberNickname(member, player.fullName);
+    const nickname = `${player.fullName} (${player.duprId})`;
+    await setMemberNickname(member, nickname);
 
     // if member is male, add men role
     // if member is female, add women role
@@ -147,9 +166,29 @@ async function handleConfirmedUser(member: GuildMember, duprPlayerData: DUPRResp
 
     await dmChannel.send("You have been verified and your roles have been set. Welcome to the server!");
 
+    await reportUserToAdmins(member, duprPlayerData);
 }
 
-async function getDUPRByName(playerName: string) {
+async function reportUserToAdmins(member: GuildMember, duprPlayerData?: DUPRResponse) {
+    const player = duprPlayerData?.result.hits[0];
+    // admin channel is #admin-mods
+    const adminModsChannel: GuildBasedChannel = member.guild.channels.cache.find(channel => channel.name === 'admin-mods' && channel.type === ChannelType.GuildText);
+
+    if (adminModsChannel && adminModsChannel.isTextBased()) {
+        if (player) {
+            await adminModsChannel.send(`New member ${member.user.tag} has completed the interview process successfully and is now verified.
+        \nProfile name: ${player.fullName}
+        \nDUPR: ${player.ratings.doubles}`);
+        }
+        else {
+            await adminModsChannel.send(`New member ${member.user.tag} has not completed the interview process. They are drowning in the pond. Please help.`);
+        }
+    } else {
+        console.log('admin-mods channel not found');
+    }
+}
+
+export async function getDUPRByName(playerName: string) {
     let data = JSON.stringify({
         "filter": {
             "lat": 43.61529,

@@ -4,11 +4,16 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "rm -rf ./dist && tsc && node ./dist/index"
+    "start": "rm -rf ./dist && tsc && node ./dist/index",
+    "leaderboard": "rm -rf ./dist && tsc && node ./dist/leaderboard-bot",
+    "local": "rm -rf ./dist && tsc && node ./dist/indexLocal"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.511.0",
+    "@aws-sdk/lib-dynamodb": "^3.511.0",
+    "@smithy/node-http-handler": "^2.3.1",
     "axios": "^1.6.7",
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.1"
