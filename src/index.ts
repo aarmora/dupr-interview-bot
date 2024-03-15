@@ -146,7 +146,7 @@ client.on('guildMemberAdd', async member => {
 
 async function handleConfirmedUser(member: GuildMember, duprPlayerData: DUPRResponse, dmChannel: DMChannel) {
     const player = duprPlayerData.result.hits[0];
-    const nickname = `${player.fullName} (${player.duprId})`;
+    const nickname = `${player.fullName}`;
     await setMemberNickname(member, nickname);
 
     // if member is male, add men role
